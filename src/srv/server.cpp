@@ -135,7 +135,10 @@ auto get_router(const std::string& sha1_db_filename, const std::string& ntlm_db_
                 const std::string& binfuse16_filter_filename,
                 const std::string& binfuse8_filter_filename) {
   auto router = std::make_unique<restinio::router::express_router_t<>>();
-  router->http_get(R"(/check/:format/:password)", [&](auto req, auto params) { // NOLINT copied + complexity
+
+  // Shared by the GET (password in the URL) and POST (password in the body) routes.
+  auto check = [&](restinio::request_handle_t req, const std::string& format, // NOLINT complexity
+                   const std::string& password) -> restinio::request_handling_status_t {
     try {
       // unique db object (ie set of buffers and pointers) per thread and per db file supplied
       using sha1_db_t = flat_file::database<pawned_pw_sha1>;
@@ -168,9 +171,7 @@ auto get_router(const std::string& sha1_db_filename, const std::string& ntlm_db_
               ? std::unique_ptr<binfuse::sharded_filter8_source>{}
               : std::make_unique<binfuse::sharded_filter8_source>(binfuse8_filter_filename);
 
-      const std::string password{params["password"]};
-
-      if (params["format"] == "plain") {
+      if (format == "plain") {
         if (sha1_db) {
           return handle_plain_search(*sha1_db, password, req);
         }
@@ -190,24 +191,24 @@ auto get_router(const std::string& sha1_db_filename, const std::string& ntlm_db_
             req, "--sha1-db, --ntlm-db, --sha1t64-db, --binfuse16-filter or --binfuse8-filter, ",
             "/check/plain");
       }
-      if (params["format"] == "sha1") {
+      if (format == "sha1") {
         if (!sha1_db) return fail_missing_db_for_format(req, "--sha1-db", "/check/sha1");
         return handle_hash_search(*sha1_db, password, req);
       }
-      if (params["format"] == "ntlm") {
+      if (format == "ntlm") {
         if (!ntlm_db) return fail_missing_db_for_format(req, "--ntlm-db", "/check/ntlm");
         return handle_hash_search(*ntlm_db, password, req);
       }
-      if (params["format"] == "sha1t64") {
+      if (format == "sha1t64") {
         if (!sha1t64_db) return fail_missing_db_for_format(req, "--sha1t64-db", "/check/sha1t64");
         return handle_hash_search(*sha1t64_db, password, req);
       }
-      if (params["format"] == "binfuse16") {
+      if (format == "binfuse16") {
         if (!binfuse16_filter)
           return fail_missing_db_for_format(req, "--binfuse16-filter", "/check/binfuse16");
         return handle_hash_filter_search(*binfuse16_filter, password, req);
       }
-      if (params["format"] == "binfuse8") {
+      if (format == "binfuse8") {
         if (!binfuse8_filter)
           return fail_missing_db_for_format(req, "--binfuse8-filter", "/check/binfuse8");
         return handle_hash_filter_search(*binfuse8_filter, password, req);
@@ -223,6 +224,29 @@ auto get_router(const std::string& sha1_db_filename, const std::string& ntlm_db_
           .connection_close()
           .done();
     }
+  };
+
+  // GET /check/:format/:password  (password or hash in the URL; unchanged behaviour)
+  router->http_get(R"(/check/:format/:password)", [check](auto req, auto params) { // NOLINT copied
+    return check(req, std::string{params["format"]}, std::string{params["password"]});
+  });
+
+  // POST /check/:format  (password or hash in the request body, so it stays out of URLs and logs)
+  // The body is taken verbatim as the password for `plain`, whatever the Content-Type, so use
+  // eg `curl --data-binary @-` rather than `-d`, which can strip newlines when reading files.
+  // For hash formats, surrounding whitespace (eg a trailing newline from `echo`) is trimmed.
+  router->http_post(R"(/check/:format)", [check](auto req, auto params) { // NOLINT copied
+    const std::string format{params["format"]};
+    std::string       body{req->body()};
+    if (format != "plain") {
+      const auto first = body.find_first_not_of(" \t\r\n");
+      const auto last  = body.find_last_not_of(" \t\r\n");
+      body = first == std::string::npos ? std::string{} : body.substr(first, last - first + 1);
+    }
+    if (body.empty()) {
+      return bad_request("POST body must contain the password or hash.", req);
+    }
+    return check(req, format, body);
   });
 
   router->non_matched_request_handler([](auto req) { // NOLINT copied
@@ -260,6 +284,10 @@ void run_server() {
                            "{0}/check/plain/password123  [using {1}]\n",
                            server, plain_using);
 
+  std::cout << fmt::format("or POST the password/hash in the request body (keeps it out of URLs "
+                           "and access logs), eg:\n"
+                           "curl --data-binary @- {}/check/plain  [format = plain|sha1|ntlm|...]\n",
+                           server);
   if (!cli.sha1_db_filename.empty()) {
     std::cout << fmt::format("{}/check/sha1/CBFDAC6008F9CAB4083784CBD1874F76618D2A97\n", server);
   }

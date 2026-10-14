@@ -82,6 +82,19 @@ curl http://localhost:8082/check/plain/password123
 curl http://localhost:8082/check/sha1/CBFDAC6008F9CAB4083784CBD1874F76618D2A97
 ```
 
+You can also `POST` the password (or hash) in the request body to `/check/:format`,
+which keeps it out of URLs, access logs and browser history:
+
+```bash
+printf '%s' 'password123' | curl --data-binary @- http://localhost:8082/check/plain
+
+printf '%s' 'CBFDAC6008F9CAB4083784CBD1874F76618D2A97' | curl --data-binary @- http://localhost:8082/check/sha1
+```
+
+The body is used verbatim as the password for `plain` (regardless of `Content-Type`), so use
+`--data-binary` rather than `-d`. For hash formats surrounding whitespace is trimmed. The
+`GET` routes are unchanged.
+
 The output will be the number of times that password has appeared in
 leaks. Integrate this into your signup and login processes to show
 warnings to the users that they are using a compromised password.

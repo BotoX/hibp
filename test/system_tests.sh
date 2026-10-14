@@ -282,6 +282,43 @@ testServerPlain() {
     assertEquals "count for plain pw '${plain}' of '${count}' was wrong" "${correct_count}" "${count}"
 }
 
+testServerPostPlain() {
+    plain="truelove15"
+    correct_count="1002"
+    count=$(printf '%s' "${plain}" | curl -s --data-binary @- http://localhost:8082/check/plain)
+    assertEquals "POST count for plain pw '${plain}' of '${count}' was wrong" "${correct_count}" "${count}"
+
+    plain="password123"
+    correct_count="-1"
+    count=$(printf '%s' "${plain}" | curl -s --data-binary @- http://localhost:8082/check/plain)
+    assertEquals "POST count for plain pw '${plain}' of '${count}' was wrong" "${correct_count}" "${count}"
+
+    correct_count="POST body must contain the password or hash."
+    count=$(curl -s -X POST http://localhost:8082/check/plain)
+    assertEquals "empty POST body gave '${count}'" "${correct_count}" "${count}"
+}
+
+testServerPostSha1() {
+    sha1="00001131628B741FF755AAC0E7C66D26A7C72082"
+    correct_count="1002"
+    count=$(printf '%s' "${sha1}" | curl -s --data-binary @- http://localhost:8082/check/sha1)
+    assertEquals "POST count for sha1 pw '${sha1}' of '${count}' was wrong" "${correct_count}" "${count}"
+
+    # trailing newline (eg from echo) is trimmed for hashes
+    count=$(echo "${sha1}" | curl -s --data-binary @- http://localhost:8082/check/sha1)
+    assertEquals "POST count for sha1 pw with newline of '${count}' was wrong" "${correct_count}" "${count}"
+
+    sha1="00001131628B741FF755AAC0E7C66D26A7C72083"
+    correct_count="-1"
+    count=$(printf '%s' "${sha1}" | curl -s --data-binary @- http://localhost:8082/check/sha1)
+    assertEquals "POST count for sha1 pw '${sha1}' of '${count}' was wrong" "${correct_count}" "${count}"
+
+    sha1="00001131628B741FF755AAC0E7C66D26A7C7208"
+    correct_count="Invalid hash provided. Check type of hash."
+    count=$(printf '%s' "${sha1}" | curl -s --data-binary @- http://localhost:8082/check/sha1)
+    assertEquals "POST count for sha1 pw '${sha1}' of '${count}' was wrong" "${correct_count}" "${count}"
+}
+
 # server
 
 testServerSha1() {
